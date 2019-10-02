@@ -11,8 +11,8 @@
 
 p {
   display: block;
-  background-color: black;
-  width: 400px;
+  background-color: white;
+  width: 800px;
   margin: 50px auto;
   font: 30px Monaco,"Courier New","DejaVu Sans Mono","Bitstream Vera Sans Mono",monospace;
 }
