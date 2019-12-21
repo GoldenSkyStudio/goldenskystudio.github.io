@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <meta name="csrf-token" content="1577004658:ipZjev2OGO969Op+Qtq7xaOSj1miTr6IYHVZffWt2Ho=">
+    <title>洛谷在线 IDE</title>
+    <link rel="stylesheet" href="//cdn.luogu.com.cn/ide/luogu-ide.css?ver=20190313-7"/>
+    <style>
+        html, body, .ide-wrapper {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+<div id="ide"></div>
+<script src="https://cdn.luogu.com.cn/js/jquery-2.1.1.min.js"></script>
+<script src="//cdn.luogu.com.cn/ide/luogu-ide.min.js?ver=20190313-7"></script>
+<script>
+    var storage = window.localStorage;
+    var ide = createIDE('#ide');
+    var ws = null, resolveCurrentPromise = null;
+    var joinedChannelID = null;
+
+    ide.setLanguages([
+        { value: 1, label: 'Pascal', highlight: 'plaintext' },
+        { value: 2, label: 'C', highlight: 'cpp' },
+        { value: 3, label: 'C++', highlight: 'cpp' },
+        { value: 4, label: 'C++11', highlight: 'cpp' },
+        { value: 11, label: 'C++14', highlight: 'cpp' },
+        { value: 12, label: 'C++17', highlight: 'cpp' },
+        { value: 6, label: 'Python 2', highlight: 'python' },
+        { value: 7, label: 'Python 3', highlight: 'python' },
+        { value: 24, label: 'PyPy 2', highlight: 'python' },
+        { value: 25, label: 'PyPy 3', highlight: 'python' },
+        { value: 8, label: 'Java 8', highlight: 'java' },
+        { value: 9, label: 'Node.js', highlight: 'javascript' },
+        { value: 13, label: 'Ruby', highlight: 'ruby' },
+        { value: 14, label: 'Go', highlight: 'go' },
+        { value: 15, label: 'Rust', highlight: 'rust' },
+        { value: 16, label: 'PHP 7', highlight: 'php' },
+        { value: 17, label: 'C# Mono', highlight: 'csharp' },
+        { value: 18, label: 'Visual Basic Mono', highlight: 'vb' },
+        { value: 19, label: 'Haskell', highlight: 'plaintext' },
+        { value: 20, label: 'Kotlin/Native', highlight: 'plaintext' },
+        { value: 21, label: 'Kotlin/JVM', highlight: 'plaintext' },
+        { value: 22, label: 'Scala', highlight: 'plaintext' },
+        { value: 23, label: 'Perl', highlight: 'perl' }
+    ]);
+
+    // TODO: Implement autosave in IDE.
+    if (storage.getItem('ide-code') !== null) ide.setCode(storage.getItem('ide-code'));
+    if (storage.getItem('ide-language') !== null)
+        ide.setCurrentLanguage(parseInt(storage.getItem('ide-language')));
+    else
+        ide.setCurrentLanguage(4);
+
+    var saveInterval = setInterval(function () {
+        var code = ide.getCode(), lang = ide.getCurrentLanguage();
+        storage.setItem('ide-code', code);
+        storage.setItem('ide-language', lang);
+    }, 2500);
+
+    function run() {
+        var code = ide.getCode(), lang = ide.getCurrentLanguage(), input = ide.getInput(), o2 = ide.isO2Enabled();
+
+        var promise = new Promise(function(resolve) {
+            resolveCurrentPromise = resolve;
+        });
+
+        $.post("/api/ide_submit", {
+            code: code,
+            lang: lang,
+            input: input,
+            o2: o2 ? "true" : "",
+            'csrf-token': $('meta[name=csrf-token]').attr('content')
+        }, function (resp) {
+            if (resp.status === 200) connectWs(resp.data.rid);
+            else {
+                ide.setRunInfo(resp.data);
+                resolveCurrentPromise();
+            }
+        });
+
+        return promise;
+    }
+    ide.setRunHandler(run);
+
+    function connectWs(id) {
+        function joinChannel(rid) {
+            rid = '' + rid;
+            if (joinedChannelID !== null)
+                ws.send(JSON.stringify({
+                    "type": "disconnect_channel",
+                    "channel": "ide.track",
+                    "channel_param": joinedChannelID
+                }));
+            ws.send(JSON.stringify({
+                "type": "join_channel",
+                "channel": "ide.track",
+                "channel_param": rid
+            }));
+            joinedChannelID = rid;
+        }
+
+        if (ws !== null) {
+            if (id)
+                joinChannel(id);
+            return;
+        }
+
+        try {
+            ws = new WebSocket('wss://ws.luogu.com.cn/ws');
+        } catch (e) {
+            alert("错误", "无法连接追踪服务器，请稍后重试。");
+            return;
+        }
+        ws.onopen = function () {
+            if (id)
+                joinChannel(id);
+        };
+        ws.onmessage = function (event) {
+            data = JSON.parse(event.data);
+            if (data._ws_type === "server_broadcast") {
+                var result = getResult(data);
+                if (result) {
+                    ide.setRunInfo(result.label);
+                    ide.setOutput(result.output);
+                    resolveCurrentPromise()
+                }
+            }
+        };
+    }
+
+    connectWs();
+
+    function getResult(data) {
+        var label = null, output = null;
+        if (data.type === "compile") {
+            if (!data.success) {
+                output = data.desc;
+                label = '编译失败';
+            }
+        } else if (data.type === "execute") {
+            output = data.output;
+            switch (data.execute.error) {
+                case null:
+                    label = '运行成功 '
+                        + data.execute.real_time + 'ms ' + data.execute.memory + 'kb';
+                    break;
+                case 'Runtime Error':
+                    label = '运行时错误';
+                    break;
+                case 'Time Limit Exceeded':
+                    label = '超过时间限制';
+                    break;
+                case 'Memory Limit Exceeded':
+                    label = '超出内存限制';
+                    break;
+                case 'Output Limit Exceeded':
+                    label = '超出输出限制';
+                    break;
+            }
+        }
+
+        return label ? {label: label, output: output} : null;
+    }
+</script>
+</body>
+</html>
